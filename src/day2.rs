@@ -4,32 +4,28 @@ pub fn run() {
     println!("Day 2 Part 2: {}", part2(input));
 }
 
-fn part1(input: &str) -> u64 {
+fn solve(input: &str, predicate: fn(u64) -> bool) -> u64 {
     parse_ranges(input)
-        .iter()
-        .flat_map(|(start, end)| *start..=*end)
-        .filter(|&num| is_invalid(num))
-        .map(|num| num)
+        .into_iter()
+        .flat_map(|(start, end)| start..=end)
+        .filter(|&num| predicate(num))
         .sum()
 }
 
+fn part1(input: &str) -> u64 {
+    solve(input, is_invalid)
+}
+
 fn part2(input: &str) -> u64 {
-    parse_ranges(input)
-        .iter()
-        .flat_map(|(start, end)| *start..=*end)
-        .filter(|&num| is_invalid_plus(num))
-        .map(|num| num)
-        .sum()
+    solve(input, is_invalid_plus)
 }
 
 fn parse_ranges(input: &str) -> Vec<(u64, u64)> {
     input
         .split(',')
-        .map(|range| {
-            let mut nums = range.split('-').map(|num| num.parse::<u64>().unwrap());
-            let start = nums.next().unwrap();
-            let end = nums.next().unwrap();
-            (start, end)
+        .filter_map(|range| {
+            let (start, end) = range.split_once('-')?;
+            Some((start.parse::<u64>().ok()?, end.parse::<u64>().ok()?))
         })
         .collect()
 }
