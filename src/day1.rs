@@ -1,50 +1,53 @@
-fn day1_a(input: &str) -> u32 {
-    let mut pos = 50;
-    let mut zero_count = 0;
+const START_POS: i32 = 50;
+const MODULO: i32 = 100;
 
-    for rotation in input.lines() {
-        let rotation = parse_rotation(rotation);
-        pos += rotation;
-        pos = pos.rem_euclid(100);
-        if pos == 0 {
-            zero_count += 1;
-        }
-    }
+pub fn run() {
+    let input = include_str!("../data/day1_real.txt");
+    println!("Day 1 Part 1: {}", part1(input));
+    println!("Day 1 Part 2: {}", part2(input));
+}
 
-    zero_count
+pub fn part1(input: &str) -> u32 {
+    input
+        .lines()
+        .map(parse_rotation)
+        .fold((START_POS, 0), |(pos, count), rot| {
+            let next_pos = (pos + rot).rem_euclid(MODULO);
+            let next_count = if next_pos == 0 { count + 1 } else { count };
+            (next_pos, next_count)
+        })
+        .1
+}
+
+pub fn part2(input: &str) -> u32 {
+    input
+        .lines()
+        .map(parse_rotation)
+        .fold((START_POS, 0), |(pos, crossings), rot| {
+            let change = count_zero_crossings(pos, rot);
+            let next_pos = (pos + rot).rem_euclid(MODULO);
+            (next_pos, crossings + change)
+        })
+        .1
 }
 
 // Lnum is -num, Rnum is +num
 fn parse_rotation(rotation: &str) -> i32 {
-    let num = rotation[1..].parse::<i32>().unwrap();
-    match rotation.chars().nth(0).unwrap() {
-        'L' => -num,
-        'R' => num,
-        _ => panic!("Invalid rotation: {}", rotation),
+    if let Some(val) = rotation.strip_prefix('L') {
+        -val.parse::<i32>().expect("valid integer after L")
+    } else if let Some(val) = rotation.strip_prefix('R') {
+        val.parse::<i32>().expect("valid integer after R")
+    } else {
+        panic!("Invalid rotation format: {}", rotation);
     }
-}
-
-fn day1_b(input: &str) -> u32 {
-    let mut pos = 50;
-    let mut crossings = 0;
-
-    for rotation in input.lines() {
-        let rotation = parse_rotation(rotation);
-        let crossings_change = count_zero_crossings(pos, rotation);
-        crossings += crossings_change;
-        pos += rotation;
-        pos = pos.rem_euclid(100);
-    }
-
-    crossings
 }
 
 // We count landing at 0 as a crossing
 // But not when starting at 0
 fn count_zero_crossings(pos: i32, rotation: i32) -> u32 {
     let offset = if rotation >= 0 { 0 } else { 1 };
-    let end = (pos + rotation - offset).div_euclid(100);
-    let start = (pos - offset).div_euclid(100);
+    let end = (pos + rotation - offset).div_euclid(MODULO);
+    let start = (pos - offset).div_euclid(MODULO);
     (end - start).abs() as u32
 }
 
@@ -53,9 +56,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_day1_a_example() {
-        let input = include_str!("../data/day1_a_example.txt");
-        assert_eq!(day1_a(input), 3);
+    fn test_part1_example() {
+        let input = include_str!("../data/day1_example.txt");
+        assert_eq!(part1(input), 3);
     }
 
     #[test]
@@ -66,12 +69,6 @@ mod tests {
         assert_eq!(parse_rotation("R60"), 60);
         assert_eq!(parse_rotation("L55"), -55);
         assert_eq!(parse_rotation("L1"), -1);
-    }
-
-    #[test]
-    fn test_day1_a_real() {
-        let input = include_str!("../data/day1_a_real.txt");
-        println!("{}", day1_a(input));
     }
 
     #[test]
@@ -89,14 +86,8 @@ mod tests {
     }
 
     #[test]
-    fn test_day1_b_example() {
-        let input = include_str!("../data/day1_a_example.txt");
-        assert_eq!(day1_b(input), 6);
-    }
-
-    #[test]
-    fn test_day1_b_real() {
-        let input = include_str!("../data/day1_a_real.txt");
-        println!("{}", day1_b(input));
+    fn test_part2_example() {
+        let input = include_str!("../data/day1_example.txt");
+        assert_eq!(part2(input), 6);
     }
 }
