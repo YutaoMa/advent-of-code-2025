@@ -5,7 +5,6 @@ fn main() {
     println!("--- Day 1 ---");
     day1::run();
 
-    // Future days can be added here
-    // println!("\n--- Day 2 ---");
-    // day2::run();
+    println!("\n--- Day 2 ---");
+    day2::run();
 }
