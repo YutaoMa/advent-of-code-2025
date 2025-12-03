@@ -1,7 +1,7 @@
 pub fn run() {
     let input = include_str!("../data/day2_real.txt");
     println!("Day 2 Part 1: {}", part1(input));
-    // println!("Day 2 Part 2: {}", part2(input));
+    println!("Day 2 Part 2: {}", part2(input));
 }
 
 fn part1(input: &str) -> u64 {
@@ -14,7 +14,12 @@ fn part1(input: &str) -> u64 {
 }
 
 fn part2(input: &str) -> u64 {
-    todo!();
+    parse_ranges(input)
+        .iter()
+        .flat_map(|(start, end)| *start..=*end)
+        .filter(|&num| is_invalid_plus(num))
+        .map(|num| num)
+        .sum()
 }
 
 fn parse_ranges(input: &str) -> Vec<(u64, u64)> {
@@ -42,6 +47,31 @@ fn is_invalid(num: u64) -> bool {
     &s[..mid] == &s[mid..]
 }
 
+// See the explanation in the problem statement
+// This now includes numbers of any repetitions at least twice
+fn is_invalid_plus(num: u64) -> bool {
+    let s = num.to_string();
+    // Since we only care about the pattern
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+
+    if n < 2 {
+        return false;
+    }
+
+    // We check all divisors of n
+    for l in 1..=n / 2 {
+        if n % l == 0 {
+            let pattern = &bytes[..l];
+            if bytes[l..].chunks(l).all(|chunk| chunk == pattern) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,9 +84,26 @@ mod tests {
 
     #[test]
     fn test_is_invalid() {
-        assert_eq!(is_invalid(55), true);
-        assert_eq!(is_invalid(6464), true);
-        assert_eq!(is_invalid(123123), true);
-        assert_eq!(is_invalid(101), false);
+        assert!(is_invalid(55));
+        assert!(is_invalid(6464));
+        assert!(is_invalid(123123));
+        assert!(!is_invalid(101));
+    }
+
+    #[test]
+    fn test_is_invalid_plus() {
+        assert!(is_invalid_plus(55));
+        assert!(is_invalid_plus(6464));
+        assert!(is_invalid_plus(111));
+        assert!(is_invalid_plus(123123123));
+        assert!(is_invalid_plus(1212121212));
+        assert!(is_invalid_plus(1111111));
+        assert!(!is_invalid_plus(101));
+    }
+
+    #[test]
+    fn test_part2_example() {
+        let input = include_str!("../data/day2_example.txt");
+        assert_eq!(part2(input), 4174379265);
     }
 }
