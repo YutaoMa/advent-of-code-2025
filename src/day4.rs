@@ -4,70 +4,65 @@ pub fn run() {
     println!("Day 4 Part 2: {}", part2(input));
 }
 
-fn part1(input: &str) -> u64 {
+fn part1(input: &str) -> usize {
     let grid = parse_grid(input);
+    candidates(&grid).count()
+}
 
-    let mut total = 0u64;
-    for i in 0..grid.len() {
-        for j in 0..grid[i].len() {
-            if grid[i][j] == '@' && count_rolls(&grid, i, j) < 4 {
-                total += 1;
-            }
+fn part2(input: &str) -> usize {
+    let mut grid = parse_grid(input);
+    let mut total = 0;
+
+    loop {
+        let to_remove: Vec<_> = candidates(&grid).collect();
+
+        if to_remove.is_empty() {
+            break;
+        }
+
+        total += to_remove.len();
+        for (r, c) in to_remove {
+            grid[r][c] = '.';
         }
     }
+
     total
 }
 
-fn count_rolls(grid: &[Vec<char>], i: usize, j: usize) -> u64 {
-    let dirs = [
+/// Returns an iterator over coordinates (r, c) of '@' cells that have < 4 neighbors.
+fn candidates(grid: &[Vec<char>]) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let rows = grid.len();
+    let cols = grid.first().map_or(0, |row| row.len());
+
+    (0..rows)
+        .flat_map(move |r| (0..cols).map(move |c| (r, c)))
+        .filter(move |&(r, c)| grid[r][c] == '@' && count_neighbors(grid, r, c) < 4)
+}
+
+fn count_neighbors(grid: &[Vec<char>], r: usize, c: usize) -> usize {
+    let r = r as isize;
+    let c = c as isize;
+    const DIRS: [(isize, isize); 8] = [
         (-1, -1), (-1, 0), (-1, 1),
         ( 0, -1),          ( 0, 1),
         ( 1, -1), ( 1, 0), ( 1, 1),
     ];
 
-    let rows = grid.len() as isize;
-    let cols = if rows > 0 { grid[0].len() as isize } else { 0 };
-
-    let mut count = 0u64;
-    for (di, dj) in dirs.iter() {
-        let ni = i as isize + di;
-        let nj = j as isize + dj;
-        if ni >= 0 && nj >= 0 && ni < rows && nj < cols {
-            if grid[ni as usize][nj as usize] == '@' {
-                count += 1;
-            }
-        }
-    }
-    count
+    DIRS.iter()
+        .filter_map(|&(dr, dc)| get(grid, r + dr, c + dc))
+        .filter(|&cell| cell == '@')
+        .count()
 }
 
-fn part2(input: &str) -> u64 {
-    let mut grid = parse_grid(input);
-    let mut total = 0u64;
+fn get(grid: &[Vec<char>], r: isize, c: isize) -> Option<char> {
+    let rows = grid.len() as isize;
+    let cols = grid.first()?.len() as isize;
 
-    loop {
-        let mut mark = Vec::new();
-
-        for i in 0..grid.len() {
-            for j in 0..grid[i].len() {
-                if grid[i][j] == '@' && count_rolls(&grid, i, j) < 4 {
-                    mark.push((i, j));
-                }
-            }
-        }
-
-        if mark.is_empty() {
-            break;
-        }
-
-        total += mark.len() as u64;
-
-        for (i, j) in mark {
-            grid[i][j] = '.';
-        }
+    if r >= 0 && r < rows && c >= 0 && c < cols {
+        Some(grid[r as usize][c as usize])
+    } else {
+        None
     }
-
-    total
 }
 
 fn parse_grid(input: &str) -> Vec<Vec<char>> {
