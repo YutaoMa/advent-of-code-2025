@@ -1,7 +1,7 @@
 pub fn run() {
     let input = include_str!("../data/day4_real.txt");
     println!("Day 4 Part 1: {}", part1(input));
-    // println!("Day 4 Part 2: {}", part2(input));
+    println!("Day 4 Part 2: {}", part2(input));
 }
 
 fn part1(input: &str) -> u64 {
@@ -42,7 +42,32 @@ fn count_rolls(grid: &[Vec<char>], i: usize, j: usize) -> u64 {
 }
 
 fn part2(input: &str) -> u64 {
-    0
+    let mut grid = parse_grid(input);
+    let mut total = 0u64;
+
+    loop {
+        let mut mark = Vec::new();
+
+        for i in 0..grid.len() {
+            for j in 0..grid[i].len() {
+                if grid[i][j] == '@' && count_rolls(&grid, i, j) < 4 {
+                    mark.push((i, j));
+                }
+            }
+        }
+
+        if mark.is_empty() {
+            break;
+        }
+
+        total += mark.len() as u64;
+
+        for (i, j) in mark {
+            grid[i][j] = '.';
+        }
+    }
+
+    total
 }
 
 fn parse_grid(input: &str) -> Vec<Vec<char>> {
@@ -57,5 +82,11 @@ mod tests {
     fn test_part1_example() {
         let input = include_str!("../data/day4_example.txt");
         assert_eq!(part1(input), 13);
+    }
+
+    #[test]
+    fn test_part2_example() {
+        let input = include_str!("../data/day4_example.txt");
+        assert_eq!(part2(input), 43);
     }
 }
