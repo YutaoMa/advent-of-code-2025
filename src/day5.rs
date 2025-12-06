@@ -1,7 +1,7 @@
 pub fn run() {
     let input = include_str!("../data/day5_real.txt");
     println!("Day 5 Part 1: {}", part1(input));
-    // println!("Day 5 Part 2: {}", part2(input));
+    println!("Day 5 Part 2: {}", part2(input));
 }
 
 fn part1(input: &str) -> u64 {
@@ -11,7 +11,9 @@ fn part1(input: &str) -> u64 {
 }
 
 fn part2(input: &str) -> u64 {
-    0
+    let (ranges, numbers) = parse_input(input);
+    let merged_ranges = merge_ranges(ranges);
+    total_range(&merged_ranges)
 }
 
 fn parse_input(input: &str) -> (Vec<(u64, u64)>, Vec<u64>) {
@@ -55,6 +57,10 @@ fn is_in_ranges(number: u64, ranges: &Vec<(u64, u64)>) -> bool {
     ranges.iter().any(|(start, end)| number >= *start && number <= *end)
 }
 
+fn total_range(ranges: &Vec<(u64, u64)>) -> u64 {
+    ranges.iter().fold(0, |acc, (start, end)| acc + (end - start + 1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +95,11 @@ mod tests {
         assert!(is_in_ranges(11, &ranges));
         assert!(is_in_ranges(17, &ranges));
         assert!(!is_in_ranges(32, &ranges));
+    }
+
+    #[test]
+    fn test_part2_example() {
+        let input = include_str!("../data/day5_example.txt");
+        assert_eq!(part2(input), 14);
     }
 }
