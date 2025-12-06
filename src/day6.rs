@@ -22,7 +22,31 @@ fn part1(input: &str) -> u64 {
 }
 
 fn part2(input: &str) -> u64 {
-    0
+    let grid = parse_grid(input);
+    let mut grand_total = 0;
+    let mut nums = Vec::new();
+    for col in (0..grid[0].len()).rev() {
+        let mut curr_str = String::new();
+        for row in 0..grid.len() {
+            if grid[row][col] != ' ' && grid[row][col] != '\n' {
+                curr_str.push(grid[row][col]);
+            }
+        }
+        if curr_str.is_empty() {
+            nums.clear();
+            continue;
+        }
+        if curr_str.ends_with('*') {
+            nums.push(curr_str[..curr_str.len() - 1].parse().unwrap());
+            grand_total += nums.iter().product::<u64>();
+        } else if curr_str.ends_with('+') {
+            nums.push(curr_str[..curr_str.len() - 1].parse().unwrap());
+            grand_total += nums.iter().sum::<u64>();
+        } else {
+            nums.push(curr_str.parse().unwrap());
+        }
+    }
+    grand_total
 }
 
 fn parse_input(input: &str) -> (Vec<Vec<u64>>, Vec<char>) {
@@ -30,6 +54,10 @@ fn parse_input(input: &str) -> (Vec<Vec<u64>>, Vec<char>) {
     let nums = lines[..lines.len() - 1].iter().map(|line| line.split_whitespace().map(|num| num.parse().unwrap()).collect()).collect();
     let operations = lines[lines.len() - 1].split_whitespace().map(|op| op.parse().unwrap()).collect();
     (nums, operations)
+}
+
+fn parse_grid(input: &str) -> Vec<Vec<char>> {
+    input.lines().map(|line| line.chars().collect()).collect()
 }
 
 #[cfg(test)]
@@ -40,6 +68,12 @@ mod tests {
     fn test_part1_example() {
         let input = include_str!("../data/day6_example.txt");
         assert_eq!(part1(input), 4277556);
+    }
+
+    #[test]
+    fn test_part2_example() {
+        let input = include_str!("../data/day6_example.txt");
+        assert_eq!(part2(input), 3263827);
     }
 
     #[test]
