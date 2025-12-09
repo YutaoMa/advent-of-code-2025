@@ -4,7 +4,7 @@ use std::hash::Hash;
 pub fn run() {
     let input = include_str!("../data/day8_real.txt");
     println!("Day 8 Part 1: {}", part1(input, 1000));
-    // println!("Day 8 Part 2: {}", part2(input));
+    println!("Day 8 Part 2: {}", part2(input));
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -112,7 +112,39 @@ impl DisjointSet {
 
 
 fn part2(input: &str) -> u64 {
-    0
+    let positions = parse_input(input);
+    let mut disjoint_set = DisjointSet::new(&positions);
+
+    let mut edges = Vec::new();
+    for (i, pos1) in positions.iter().enumerate() {
+        for (j, pos2) in positions.iter().enumerate() {
+            if i >= j {
+                continue;
+            }
+            let dx = pos1.x - pos2.x;
+            let dy = pos1.y - pos2.y;
+            let dz = pos1.z - pos2.z;
+            let dist = dx * dx + dy * dy + dz * dz;
+            edges.push((dist, *pos1, *pos2));
+        }
+    }
+
+    edges.sort_by_key(|e| e.0);
+
+    let mut last_x1_x2 = (0, 0);
+    let mut components = positions.len();
+    for &(_dist, pos1, pos2) in &edges {
+        if !disjoint_set.connected(pos1, pos2) {
+            disjoint_set.union(pos1, pos2);
+            last_x1_x2 = (pos1.x, pos2.x);
+            components -= 1;
+            if components == 1 {
+                break;
+            }
+        }
+    }
+
+    (last_x1_x2.0.abs() as u64) * (last_x1_x2.1.abs() as u64)
 }
 
 fn parse_input(input: &str) -> Vec<Position> {
@@ -140,5 +172,11 @@ mod tests {
         assert_eq!(positions[0].x, 162);
         assert_eq!(positions[0].y, 817);
         assert_eq!(positions[0].z, 812);
+    }
+
+    #[test]
+    fn test_part2() {
+        let input = include_str!("../data/day8_example.txt");
+        assert_eq!(part2(input), 25272);
     }
 }
