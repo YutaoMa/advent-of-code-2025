@@ -5,60 +5,73 @@ pub fn run() {
 }
 
 fn part1(input: &str) -> u64 {
-    let grid = parse_grid(input);
-    let mut beam_grid: Vec<Vec<bool>> = Vec::new();
-    beam_grid.resize(grid.len(), vec![false; grid[0].len()]);
-    let mut count = 0;
-    for r in 1..grid.len() {
-        for c in 0..grid[r].len() {
-            if grid[r - 1][c] == 'S' {
-                beam_grid[r][c] = true;
-            } else if beam_grid[r - 1][c] {
-                if grid[r][c] == '^' {
-                    count += 1;
-                    if c > 0 {
-                        beam_grid[r][c - 1] = true;
-                    }
-                    if c < grid[r].len() - 1 {
-                        beam_grid[r][c + 1] = true;
-                    }
-                } else {
-                    beam_grid[r][c] = true;
-                }
-            }
-        }
-    }
-    count
+    solve(input, true)
 }
 
 fn part2(input: &str) -> u64 {
-    let grid = parse_grid(input);
-    let mut beam_grid: Vec<Vec<u64>> = Vec::new();
-    beam_grid.resize(grid.len(), vec![0; grid[0].len()]);
-    let mut count = 0;
-    for r in 1..grid.len() {
-        for c in 0..grid[r].len() {
-            if grid[r - 1][c] == 'S' {
-                beam_grid[r][c] = 1;
-            } else if beam_grid[r - 1][c] > 0 {
-                if grid[r][c] == '^' {
-                    if c > 0 {
-                        beam_grid[r][c - 1] += beam_grid[r - 1][c];
+    solve(input, false)
+}
+
+fn solve(input: &str, part1: bool) -> u64 {
+    let grid: Vec<&[u8]> = input.lines().map(|line| line.as_bytes()).collect();
+    if grid.is_empty() {
+        return 0;
+    }
+
+    let (rows, cols) = (grid.len(), grid[0].len());
+    let mut beams = vec![0u64; cols];
+    let mut next_beams = vec![0u64; cols];
+    let mut hit_count = 0;
+
+    for r in 1..rows {
+        next_beams.fill(0);
+        let prev_row = grid[r - 1];
+        let curr_row = grid[r];
+
+        for c in 0..cols {
+            let is_source = prev_row[c] == b'S';
+            let incoming = beams[c];
+
+            if is_source {
+                next_beams[c] = 1;
+            } else if incoming > 0 {
+                match curr_row[c] {
+                    b'^' => {
+                        if part1 {
+                            hit_count += 1;
+                            if c > 0 {
+                                next_beams[c - 1] = 1;
+                            }
+                            if c < cols - 1 {
+                                next_beams[c + 1] = 1;
+                            }
+                        } else {
+                            if c > 0 {
+                                next_beams[c - 1] += incoming;
+                            }
+                            if c < cols - 1 {
+                                next_beams[c + 1] += incoming;
+                            }
+                        }
                     }
-                    if c < grid[r].len() - 1 {
-                        beam_grid[r][c + 1] += beam_grid[r - 1][c];
+                    _ => {
+                        if part1 {
+                            next_beams[c] = 1;
+                        } else {
+                            next_beams[c] += incoming;
+                        }
                     }
-                } else {
-                    beam_grid[r][c] += beam_grid[r - 1][c];
                 }
             }
         }
+        std::mem::swap(&mut beams, &mut next_beams);
     }
-    beam_grid[grid.len() - 1].iter().sum()
-}
 
-fn parse_grid(input: &str) -> Vec<Vec<char>> {
-    input.lines().map(|line| line.chars().collect()).collect()
+    if part1 {
+        hit_count
+    } else {
+        beams.iter().sum()
+    }
 }
 
 #[cfg(test)]
