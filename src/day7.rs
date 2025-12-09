@@ -1,7 +1,7 @@
 pub fn run() {
     let input = include_str!("../data/day7_real.txt");
     println!("Day 7 Part 1: {}", part1(input));
-    // println!("Day 7 Part 2: {}", part2(input));
+    println!("Day 7 Part 2: {}", part2(input));
 }
 
 fn part1(input: &str) -> u64 {
@@ -32,7 +32,29 @@ fn part1(input: &str) -> u64 {
 }
 
 fn part2(input: &str) -> u64 {
-    0
+    let grid = parse_grid(input);
+    let mut beam_grid: Vec<Vec<u64>> = Vec::new();
+    beam_grid.resize(grid.len(), vec![0; grid[0].len()]);
+    let mut count = 0;
+    for r in 1..grid.len() {
+        for c in 0..grid[r].len() {
+            if grid[r - 1][c] == 'S' {
+                beam_grid[r][c] = 1;
+            } else if beam_grid[r - 1][c] > 0 {
+                if grid[r][c] == '^' {
+                    if c > 0 {
+                        beam_grid[r][c - 1] += beam_grid[r - 1][c];
+                    }
+                    if c < grid[r].len() - 1 {
+                        beam_grid[r][c + 1] += beam_grid[r - 1][c];
+                    }
+                } else {
+                    beam_grid[r][c] += beam_grid[r - 1][c];
+                }
+            }
+        }
+    }
+    beam_grid[grid.len() - 1].iter().sum()
 }
 
 fn parse_grid(input: &str) -> Vec<Vec<char>> {
@@ -47,5 +69,11 @@ mod tests {
     fn test_part1() {
         let input = include_str!("../data/day7_example.txt");
         assert_eq!(part1(input), 21);
+    }
+
+    #[test]
+    fn test_part2() {
+        let input = include_str!("../data/day7_example.txt");
+        assert_eq!(part2(input), 40);
     }
 }
