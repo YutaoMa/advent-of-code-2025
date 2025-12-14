@@ -9,122 +9,34 @@ pub fn run() {
 }
 
 fn part1(input: &str) -> u64 {
-    let lines = parse_input(input);
-    lines
+    parse_input(input)
         .into_iter()
-        .map(|(goal, instructions, _)| min_operations(&goal, &instructions))
+        .map(|line| min_operations(&line.goal, &line.instructions))
         .sum()
-}
-
-fn part2(input: &str) -> u64 {
-    let lines = parse_input(input);
-    let total = lines.len();
-    let progress_enabled = std::env::var("AOC_DAY10_PROGRESS")
-        .ok()
-        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-    let limit_lines: Option<usize> = std::env::var("AOC_DAY10_LIMIT_LINES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&v| v > 0);
-
-    let total = limit_lines.unwrap_or(total).min(total);
-    let threads: usize = std::env::var("AOC_DAY10_THREADS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&t| t > 0)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1)
-        });
-
-    let threaded = threads > 1;
-    let per_line_progress = progress_enabled && !threaded;
-    if progress_enabled && threaded {
-        eprintln!(
-            "AOC_DAY10_PROGRESS is enabled, but AOC_DAY10_THREADS>1: disabling per-line progress logs (they interleave). Set AOC_DAY10_THREADS=1 to debug a slow line."
-        );
-    }
-
-    let compute_one = |i: usize| -> u64 {
-        let (_, instructions, joltage) = &lines[i];
-        let line_start = Instant::now();
-        eprintln!(
-            "Processing line {}/{} (joltage: {:?})",
-            i + 1,
-            total,
-            joltage
-        );
-        let result = if per_line_progress {
-            let prefix = format!("line {}/{}", i + 1, total);
-            min_counter_operations_with_progress(&prefix, joltage, instructions)
-        } else {
-            min_counter_operations(joltage, instructions)
-        };
-        eprintln!(
-            "  -> result: {} (elapsed: {:?})",
-            result,
-            line_start.elapsed()
-        );
-        if result == u64::MAX {
-            panic!("No solution found for line {}/{}", i + 1, total);
-        }
-        result
-    };
-
-    let sum_u128: u128 = if !threaded {
-        (0..total).map(|i| compute_one(i) as u128).sum()
-    } else {
-        eprintln!(
-            "Running Day 10 Part 2 with {} threads ({} lines)",
-            threads, total
-        );
-        let next = AtomicUsize::new(0);
-        std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(threads);
-            for _ in 0..threads {
-                handles.push(s.spawn(|| {
-                    let mut local_sum: u128 = 0;
-                    loop {
-                        let i = next.fetch_add(1, Ordering::Relaxed);
-                        if i >= total {
-                            break;
-                        }
-                        local_sum += compute_one(i) as u128;
-                    }
-                    local_sum
-                }));
-            }
-            handles
-                .into_iter()
-                .map(|h| h.join().expect("worker thread panicked"))
-                .sum::<u128>()
-        })
-    };
-
-    u64::try_from(sum_u128)
-        .unwrap_or_else(|_| panic!("part2 sum overflowed u64 (sum={})", sum_u128))
 }
 
 fn min_operations(goal: &[bool], instructions: &[Vec<usize>]) -> u64 {
     let n = goal.len();
+    let start = vec![false; n];
+
+    if start == goal {
+        return 0;
+    }
+
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
 
-    let start = vec![false; n];
-    queue.push_back((start.clone(), 0));
-    visited.insert(start);
+    visited.insert(start.clone());
+    queue.push_back((start, 0u64));
 
     while let Some((state, steps)) = queue.pop_front() {
-        if state == goal {
-            return steps;
-        }
         for instr in instructions {
             let mut next = state.clone();
-            for &idx in instr {
-                if idx < n {
-                    next[idx] ^= true;
-                }
+            for &idx in instr.iter().filter(|&&i| i < n) {
+                next[idx] ^= true;
+            }
+            if next == goal {
+                return steps + 1;
             }
             if visited.insert(next.clone()) {
                 queue.push_back((next, steps + 1));
@@ -135,186 +47,228 @@ fn min_operations(goal: &[bool], instructions: &[Vec<usize>]) -> u64 {
     u64::MAX
 }
 
+fn part2(input: &str) -> u64 {
+    let lines = parse_input(input);
+    let config = Part2Config::from_env(lines.len());
+
+    let compute_one = |i: usize| -> u64 {
+        let line = &lines[i];
+        let line_start = Instant::now();
+        eprintln!(
+            "Processing line {}/{} (joltage: {:?})",
+            i + 1,
+            config.total,
+            line.joltage
+        );
+
+        let result = if config.per_line_progress {
+            let prefix = format!("line {}/{}", i + 1, config.total);
+            min_counter_operations_with_progress(&prefix, &line.joltage, &line.instructions)
+        } else {
+            min_counter_operations(&line.joltage, &line.instructions)
+        };
+
+        eprintln!(
+            "  -> result: {} (elapsed: {:?})",
+            result,
+            line_start.elapsed()
+        );
+
+        assert_ne!(result, u64::MAX, "No solution found for line {}", i + 1);
+        result
+    };
+
+    let sum = if config.threads == 1 {
+        (0..config.total).map(|i| compute_one(i) as u128).sum()
+    } else {
+        run_parallel(config.threads, config.total, compute_one)
+    };
+
+    u64::try_from(sum).unwrap_or_else(|_| panic!("part2 sum overflowed u64 (sum={})", sum))
+}
+
+struct Part2Config {
+    total: usize,
+    threads: usize,
+    per_line_progress: bool,
+}
+
+impl Part2Config {
+    fn from_env(line_count: usize) -> Self {
+        let progress_enabled = std::env::var("AOC_DAY10_PROGRESS")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+
+        let limit_lines = std::env::var("AOC_DAY10_LIMIT_LINES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&v| v > 0);
+
+        let total = limit_lines.unwrap_or(line_count).min(line_count);
+
+        let threads = std::env::var("AOC_DAY10_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&t| t > 0)
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            });
+
+        let per_line_progress = progress_enabled && threads == 1;
+        if progress_enabled && threads > 1 {
+            eprintln!(
+                "AOC_DAY10_PROGRESS is enabled, but AOC_DAY10_THREADS>1: \
+                 disabling per-line progress logs. Set AOC_DAY10_THREADS=1 to debug."
+            );
+        }
+
+        Self {
+            total,
+            threads,
+            per_line_progress,
+        }
+    }
+}
+
+fn run_parallel<F>(threads: usize, total: usize, compute: F) -> u128
+where
+    F: Fn(usize) -> u64 + Sync,
+{
+    eprintln!(
+        "Running Day 10 Part 2 with {} threads ({} lines)",
+        threads, total
+    );
+    let next = AtomicUsize::new(0);
+
+    std::thread::scope(|s| {
+        (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut local_sum: u128 = 0;
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= total {
+                            break;
+                        }
+                        local_sum += compute(i) as u128;
+                    }
+                    local_sum
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().expect("worker thread panicked"))
+            .sum()
+    })
+}
+
 fn min_counter_operations_with_progress(
     prefix: &str,
     joltage: &[u32],
     instructions: &[Vec<usize>],
 ) -> u64 {
-    min_counter_operations_impl(Some(prefix), joltage, instructions)
+    CounterSolver::new(joltage, instructions).solve(Some(prefix))
 }
 
 fn min_counter_operations(joltage: &[u32], instructions: &[Vec<usize>]) -> u64 {
-    min_counter_operations_impl(None, joltage, instructions)
+    CounterSolver::new(joltage, instructions).solve(None)
 }
 
-fn min_counter_operations_impl(
-    prefix: Option<&str>,
-    joltage: &[u32],
-    instructions: &[Vec<usize>],
-) -> u64 {
-    let n = joltage.len();
-    if n == 0 {
-        return 0;
+struct CounterSolver {
+    masks: Vec<u16>,
+    sizes: Vec<u32>,
+    initial_rem: Vec<u16>,
+    sum_target: u32,
+    use_packed_memo: bool,
+}
+
+impl CounterSolver {
+    fn new(joltage: &[u32], instructions: &[Vec<usize>]) -> Self {
+        let n = joltage.len();
+
+        let mut masks: Vec<u16> = instructions
+            .iter()
+            .filter_map(|instr| {
+                let mask = instr
+                    .iter()
+                    .filter(|&&idx| idx < n && idx < 16)
+                    .fold(0u16, |acc, &idx| acc | (1u16 << idx));
+                (mask != 0).then_some(mask)
+            })
+            .collect();
+
+        masks.sort_by_key(|&m| std::cmp::Reverse(m.count_ones()));
+        masks.dedup();
+
+        let sizes: Vec<u32> = masks.iter().map(|&m| m.count_ones()).collect();
+        let initial_rem: Vec<u16> = joltage
+            .iter()
+            .map(|&v| u16::try_from(v).unwrap_or(u16::MAX))
+            .collect();
+        let sum_target: u32 = joltage.iter().sum();
+
+        const BITS_PER_REG: u32 = 10;
+        let max_target = joltage.iter().copied().max().unwrap_or(0);
+        let use_packed_memo = n <= 12 && max_target < (1 << BITS_PER_REG);
+
+        Self {
+            masks,
+            sizes,
+            initial_rem,
+            sum_target,
+            use_packed_memo,
+        }
     }
 
-    let mut masks: Vec<u16> = instructions
-        .iter()
-        .filter_map(|instr| {
-            let mut mask: u16 = 0;
-            for &idx in instr {
-                if idx < n && idx < 16 {
-                    mask |= 1u16 << idx;
-                }
-            }
-            (mask != 0).then_some(mask)
-        })
-        .collect();
+    fn solve(&self, progress_prefix: Option<&str>) -> u64 {
+        if self.initial_rem.is_empty() {
+            return 0;
+        }
 
-    if masks.is_empty() {
-        return if joltage.iter().all(|&v| v == 0) {
-            0
+        if self.masks.is_empty() {
+            return if self.initial_rem.iter().all(|&v| v == 0) {
+                0
+            } else {
+                u64::MAX
+            };
+        }
+
+        let interval = std::env::var("AOC_DAY10_PROGRESS_INTERVAL_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_millis(250));
+
+        let mut progress = progress_prefix.map(|p| Progress::new(p, self.masks.len(), interval));
+        let mut state = SearchState::new(self.sum_target, self.initial_rem.clone());
+        let active0 = initial_active_mask(self.masks.len());
+
+        if self.use_packed_memo {
+            let mut memo: HashMap<u128, u32> = HashMap::new();
+            self.dfs::<PackedMemo>(active0, &mut state, &mut memo, &mut progress);
         } else {
-            u64::MAX
-        };
-    }
-
-    masks.sort_by_key(|&m| std::cmp::Reverse(m.count_ones()));
-
-    masks.dedup();
-
-    let m = masks.len();
-    let sizes: Vec<u32> = masks.iter().map(|&mm| mm.count_ones()).collect();
-
-    let mut rem: Vec<u16> = joltage
-        .iter()
-        .map(|&v| u16::try_from(v).unwrap_or(u16::MAX))
-        .collect();
-
-    let sum_target: u32 = joltage.iter().map(|&v| v as u32).sum();
-    let mut best: u32 = sum_target;
-    let mut found = false;
-
-    struct Progress<'a> {
-        prefix: &'a str,
-        total_instrs: usize,
-        start: Instant,
-        last_report: Instant,
-        last_best_report: Instant,
-        interval: Duration,
-        nodes: u64,
-        memo_prunes: u64,
-    }
-
-    impl<'a> Progress<'a> {
-        fn new(prefix: &'a str, total_instrs: usize, interval: Duration) -> Self {
-            let now = Instant::now();
-            Self {
-                prefix,
-                total_instrs,
-                start: now,
-                last_report: now,
-                last_best_report: now,
-                interval,
-                nodes: 0,
-                memo_prunes: 0,
-            }
+            let mut memo: HashMap<Vec<u16>, u32> = HashMap::new();
+            self.dfs::<VecMemo>(active0, &mut state, &mut memo, &mut progress);
         }
 
-        fn tick(
-            &mut self,
-            depth: usize,
-            active: usize,
-            used: u32,
-            best: u32,
-            memo_len: usize,
-            rem: &[u16],
-        ) {
-            self.nodes += 1;
-            if (self.nodes & 0x0fff) != 0 {
-                return;
-            }
-            let now = Instant::now();
-            if now.duration_since(self.last_report) < self.interval {
-                return;
-            }
-            self.last_report = now;
-            let maxr = rem.iter().copied().max().unwrap_or(0);
-            let sumr: u32 = rem.iter().map(|&v| v as u32).sum();
-            eprintln!(
-                "[{}] nodes={} depth={}/{} active={} used={} best={} rem_sum={} rem_max={} memo={} memo_prunes={} elapsed={:?}",
-                self.prefix,
-                self.nodes,
-                depth,
-                self.total_instrs,
-                active,
-                used,
-                best,
-                sumr,
-                maxr,
-                memo_len,
-                self.memo_prunes,
-                self.start.elapsed()
-            );
-        }
-
-        fn report_best(&mut self, used: u32, best: u32) {
-            let now = Instant::now();
-            if now.duration_since(self.last_best_report) < Duration::from_millis(250) {
-                return;
-            }
-            self.last_best_report = now;
-            eprintln!(
-                "[{}] new best={} (used={}) nodes={} elapsed={:?}",
-                self.prefix,
-                best,
-                used,
-                self.nodes,
-                self.start.elapsed()
-            );
-        }
+        state.result()
     }
 
-    fn max_rem(rem: &[u16]) -> u32 {
-        rem.iter().copied().max().unwrap_or(0) as u32
-    }
-
-    fn sum_rem(rem: &[u16]) -> u32 {
-        rem.iter().map(|&v| v as u32).sum()
-    }
-
-    fn is_all_zero(rem: &[u16]) -> bool {
-        rem.iter().all(|&v| v == 0)
-    }
-
-    fn popcount16(x: u16) -> usize {
-        x.count_ones() as usize
-    }
-
-    fn dfs_active_packed(
-        masks: &[u16],
-        sizes: &[u32],
+    fn dfs<M: MemoStrategy>(
+        &self,
         active: u16,
-        rem: &mut [u16],
-        used: u32,
-        best: &mut u32,
-        found: &mut bool,
-        memo: &mut HashMap<u128, u32>,
-        pack_state: &impl Fn(u16, &[u16]) -> u128,
+        state: &mut SearchState,
+        memo: &mut M::Map,
         progress: &mut Option<Progress<'_>>,
     ) {
-        if used >= *best {
+        if state.used >= state.best {
             return;
         }
 
-        if is_all_zero(rem) {
-            let old = *best;
-            *best = (*best).min(used);
-            *found = true;
-            if *best < old {
-                if let Some(p) = progress.as_mut() {
-                    p.report_best(used, *best);
-                }
-            }
+        if state.is_all_zero() {
+            state.update_best(progress);
             return;
         }
 
@@ -323,554 +277,493 @@ fn min_counter_operations_impl(
         }
 
         if let Some(p) = progress.as_mut() {
-            let active_count = popcount16(active);
-            let depth = p.total_instrs - active_count;
-            p.tick(depth, active_count, used, *best, memo.len(), rem);
+            p.tick(self.masks.len(), active, state, M::len(memo));
         }
 
-        let mut coverable: u16 = 0;
-        let mut max_sz: u32 = 1;
-        for i in 0..masks.len() {
-            if (active & (1u16 << i)) != 0 {
-                coverable |= masks[i];
-                max_sz = max_sz.max(sizes[i]);
-            }
-        }
-
-        for (ri, &r) in rem.iter().enumerate() {
-            if r > 0 && (coverable & (1u16 << ri)) == 0 {
-                return;
-            }
-        }
-
-        let lb1 = used.saturating_add(max_rem(rem));
-        let srem = sum_rem(rem);
-        let lb2 = used.saturating_add((srem + max_sz - 1) / max_sz);
-        let lb = lb1.max(lb2);
-        if lb >= *best {
+        let (coverable, max_sz) = self.compute_coverage(active);
+        if !state.can_be_covered(coverable) {
             return;
         }
 
-        let mut active_local = active;
-        let mut forced_stack: Vec<(usize, u16)> = Vec::new();
-        let mut impossible = false;
-        'prop: loop {
+        if state.lower_bound(max_sz) >= state.best {
+            return;
+        }
+
+        let mut propagator = ConstraintPropagator::new(active);
+        if !propagator.propagate(&self.masks, &mut state.rem) {
+            propagator.restore(&self.masks, &mut state.rem);
+            return;
+        }
+
+        let used2 = state.used + propagator.forced_used();
+        if used2 >= state.best {
+            propagator.restore(&self.masks, &mut state.rem);
+            return;
+        }
+
+        let key = M::make_key(propagator.active, &state.rem);
+        if let Some(&prev_used) = M::get(memo, &key) {
+            if used2 >= prev_used {
+                if let Some(p) = progress.as_mut() {
+                    p.memo_prunes += 1;
+                }
+                propagator.restore(&self.masks, &mut state.rem);
+                return;
+            }
+        }
+        M::insert(memo, key, used2);
+
+        if state.is_all_zero() {
+            let old_used = state.used;
+            state.used = used2;
+            state.update_best(progress);
+            state.used = old_used;
+        } else if propagator.active != 0 {
+            self.branch::<M>(propagator.active, used2, state, memo, progress);
+        }
+
+        propagator.restore(&self.masks, &mut state.rem);
+    }
+
+    fn compute_coverage(&self, active: u16) -> (u16, u32) {
+        self.masks
+            .iter()
+            .zip(&self.sizes)
+            .enumerate()
+            .filter(|(i, _)| (active & (1u16 << i)) != 0)
+            .fold((0u16, 1u32), |(cov, max_sz), (_, (&mask, &sz))| {
+                (cov | mask, max_sz.max(sz))
+            })
+    }
+
+    fn branch<M: MemoStrategy>(
+        &self,
+        active: u16,
+        used: u32,
+        state: &mut SearchState,
+        memo: &mut M::Map,
+        progress: &mut Option<Progress<'_>>,
+    ) {
+        let instr_idx = self.choose_instruction(active, &state.rem);
+        let mask = self.masks[instr_idx];
+        let max_use = state.max_applicable(mask);
+        let next_active = active & !(1u16 << instr_idx);
+        let original_used = state.used;
+
+        for x in (0..=max_use).rev() {
+            let new_used = used + x as u32;
+            if new_used >= state.best {
+                continue;
+            }
+
+            if x != 0 {
+                state.apply_mask(mask, x);
+            }
+
+            state.used = new_used;
+            self.dfs::<M>(next_active, state, memo, progress);
+            state.used = original_used;
+
+            if x != 0 {
+                state.unapply_mask(mask, x);
+            }
+        }
+    }
+
+    fn choose_instruction(&self, active: u16, rem: &[u16]) -> usize {
+        let mut best_idx = None;
+        let mut best_cover = usize::MAX;
+
+        for (reg, &r) in rem.iter().enumerate() {
+            if r == 0 {
+                continue;
+            }
+            let bit = 1u16 << reg;
+            let (count, last_i) = self
+                .masks
+                .iter()
+                .enumerate()
+                .filter(|&(i, m)| (active & (1u16 << i)) != 0 && (m & bit) != 0)
+                .fold((0usize, 0usize), |(cnt, _), (i, _)| (cnt + 1, i));
+
+            if count > 0 && count < best_cover {
+                best_cover = count;
+                best_idx = Some(last_i);
+                if count == 1 {
+                    break;
+                }
+            }
+        }
+
+        best_idx.unwrap_or_else(|| active.trailing_zeros() as usize)
+    }
+}
+
+struct SearchState {
+    rem: Vec<u16>,
+    used: u32,
+    best: u32,
+    found: bool,
+}
+
+impl SearchState {
+    fn new(sum_target: u32, rem: Vec<u16>) -> Self {
+        Self {
+            rem,
+            used: 0,
+            best: sum_target,
+            found: false,
+        }
+    }
+
+    fn is_all_zero(&self) -> bool {
+        self.rem.iter().all(|&v| v == 0)
+    }
+
+    fn sum_rem(&self) -> u32 {
+        self.rem.iter().map(|&v| v as u32).sum()
+    }
+
+    fn max_rem(&self) -> u32 {
+        self.rem.iter().copied().max().unwrap_or(0) as u32
+    }
+
+    fn can_be_covered(&self, coverable: u16) -> bool {
+        self.rem
+            .iter()
+            .enumerate()
+            .all(|(i, &r)| r == 0 || (coverable & (1u16 << i)) != 0)
+    }
+
+    fn lower_bound(&self, max_sz: u32) -> u32 {
+        let lb1 = self.used.saturating_add(self.max_rem());
+        let lb2 = self
+            .used
+            .saturating_add((self.sum_rem() + max_sz - 1) / max_sz);
+        lb1.max(lb2)
+    }
+
+    fn max_applicable(&self, mask: u16) -> u16 {
+        self.rem
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| (mask & (1u16 << i)) != 0)
+            .map(|(_, &r)| r)
+            .min()
+            .unwrap_or(0)
+    }
+
+    fn apply_mask(&mut self, mask: u16, amount: u16) {
+        for (i, r) in self.rem.iter_mut().enumerate() {
+            if (mask & (1u16 << i)) != 0 {
+                *r -= amount;
+            }
+        }
+    }
+
+    fn unapply_mask(&mut self, mask: u16, amount: u16) {
+        for (i, r) in self.rem.iter_mut().enumerate() {
+            if (mask & (1u16 << i)) != 0 {
+                *r += amount;
+            }
+        }
+    }
+
+    fn update_best(&mut self, progress: &mut Option<Progress<'_>>) {
+        if self.used < self.best {
+            self.best = self.used;
+            self.found = true;
+            if let Some(p) = progress.as_mut() {
+                p.report_best(self.used, self.best);
+            }
+        }
+    }
+
+    fn result(&self) -> u64 {
+        if self.found {
+            self.best as u64
+        } else {
+            u64::MAX
+        }
+    }
+}
+
+struct ConstraintPropagator {
+    active: u16,
+    forced_stack: Vec<(usize, u16)>,
+}
+
+impl ConstraintPropagator {
+    fn new(active: u16) -> Self {
+        Self {
+            active,
+            forced_stack: Vec::new(),
+        }
+    }
+
+    fn propagate(&mut self, masks: &[u16], rem: &mut [u16]) -> bool {
+        loop {
             let mut changed = false;
+
             for reg in 0..rem.len() {
                 let need = rem[reg];
                 if need == 0 {
                     continue;
                 }
+
                 let bit = 1u16 << reg;
-                let mut count = 0usize;
-                let mut last_i = 0usize;
-                for i in 0..masks.len() {
-                    if (active_local & (1u16 << i)) != 0 && (masks[i] & bit) != 0 {
-                        count += 1;
-                        last_i = i;
-                        if count > 1 {
-                            break;
+                let covering: Vec<usize> = masks
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, m)| (self.active & (1u16 << i)) != 0 && (m & bit) != 0)
+                    .map(|(i, _)| i)
+                    .collect();
+
+                match covering.len() {
+                    0 => return false,
+                    1 => {
+                        let mask_idx = covering[0];
+                        let mask = masks[mask_idx];
+
+                        if rem
+                            .iter()
+                            .enumerate()
+                            .any(|(j, &r)| (mask & (1u16 << j)) != 0 && r < need)
+                        {
+                            return false;
                         }
-                    }
-                }
-                if count == 0 {
-                    impossible = true;
-                    break 'prop;
-                }
-                if count == 1 {
-                    let mask = masks[last_i];
-                    for rj in 0..rem.len() {
-                        if (mask & (1u16 << rj)) != 0 && rem[rj] < need {
-                            impossible = true;
-                            break 'prop;
+
+                        for (j, r) in rem.iter_mut().enumerate() {
+                            if (mask & (1u16 << j)) != 0 {
+                                *r -= need;
+                            }
                         }
+                        self.forced_stack.push((mask_idx, need));
+                        self.active &= !(1u16 << mask_idx);
+                        changed = true;
                     }
-                    for rj in 0..rem.len() {
-                        if (mask & (1u16 << rj)) != 0 {
-                            rem[rj] -= need;
-                        }
-                    }
-                    forced_stack.push((last_i, need));
-                    active_local &= !(1u16 << last_i);
-                    changed = true;
+                    _ => {}
                 }
             }
+
             if !changed {
                 break;
             }
         }
+        true
+    }
 
-        if impossible {
-            for &(i, x) in forced_stack.iter().rev() {
-                let mask = masks[i];
-                for rj in 0..rem.len() {
-                    if (mask & (1u16 << rj)) != 0 {
-                        rem[rj] += x;
-                    }
-                }
-            }
-            return;
-        }
-
-        let forced_used: u32 = forced_stack.iter().map(|&(_, x)| x as u32).sum();
-        let used2 = used + forced_used;
-        if used2 >= *best {
-            for &(i, x) in forced_stack.iter().rev() {
-                let mask = masks[i];
-                for rj in 0..rem.len() {
-                    if (mask & (1u16 << rj)) != 0 {
-                        rem[rj] += x;
-                    }
-                }
-            }
-            return;
-        }
-
-        let key = pack_state(active_local, rem);
-        if let Some(&prev_used) = memo.get(&key) {
-            if used2 >= prev_used {
-                if let Some(p) = progress.as_mut() {
-                    p.memo_prunes += 1;
-                }
-                for &(i, x) in forced_stack.iter().rev() {
-                    let mask = masks[i];
-                    for rj in 0..rem.len() {
-                        if (mask & (1u16 << rj)) != 0 {
-                            rem[rj] += x;
-                        }
-                    }
-                }
-                return;
-            }
-        }
-        memo.insert(key, used2);
-
-        if is_all_zero(rem) {
-            let old = *best;
-            *best = (*best).min(used2);
-            *found = true;
-            if *best < old {
-                if let Some(p) = progress.as_mut() {
-                    p.report_best(used2, *best);
-                }
-            }
-        } else if active_local != 0 {
-            let mut chosen_i: Option<usize> = None;
-            let mut chosen_reg_cover = usize::MAX;
-            for reg in 0..rem.len() {
-                if rem[reg] == 0 {
-                    continue;
-                }
-                let bit = 1u16 << reg;
-                let mut cover_count = 0usize;
-                let mut some_i = None;
-                for i in 0..masks.len() {
-                    if (active_local & (1u16 << i)) != 0 && (masks[i] & bit) != 0 {
-                        cover_count += 1;
-                        some_i = Some(i);
-                    }
-                }
-                if cover_count > 0 && cover_count < chosen_reg_cover {
-                    chosen_reg_cover = cover_count;
-                    chosen_i = some_i;
-                    if cover_count == 1 {
-                        break;
-                    }
-                }
-            }
-            let i = chosen_i.unwrap_or_else(|| active_local.trailing_zeros() as usize);
-            let mask = masks[i];
-
-            let mut max_use: u16 = u16::MAX;
-            for rj in 0..rem.len() {
-                if (mask & (1u16 << rj)) != 0 {
-                    max_use = max_use.min(rem[rj]);
-                }
-            }
-
-            let next_active = active_local & !(1u16 << i);
-            for x in (0..=max_use).rev() {
-                let new_used = used2 + x as u32;
-                if new_used >= *best {
-                    continue;
-                }
-                if x != 0 {
-                    for rj in 0..rem.len() {
-                        if (mask & (1u16 << rj)) != 0 {
-                            rem[rj] -= x;
-                        }
-                    }
-                }
-
-                dfs_active_packed(
-                    masks,
-                    sizes,
-                    next_active,
-                    rem,
-                    new_used,
-                    best,
-                    found,
-                    memo,
-                    pack_state,
-                    progress,
-                );
-
-                if x != 0 {
-                    for rj in 0..rem.len() {
-                        if (mask & (1u16 << rj)) != 0 {
-                            rem[rj] += x;
-                        }
-                    }
-                }
-            }
-        }
-
-        for &(i, x) in forced_stack.iter().rev() {
-            let mask = masks[i];
-            for rj in 0..rem.len() {
-                if (mask & (1u16 << rj)) != 0 {
-                    rem[rj] += x;
+    fn restore(&self, masks: &[u16], rem: &mut [u16]) {
+        for &(mask_idx, amount) in self.forced_stack.iter().rev() {
+            let mask = masks[mask_idx];
+            for (j, r) in rem.iter_mut().enumerate() {
+                if (mask & (1u16 << j)) != 0 {
+                    *r += amount;
                 }
             }
         }
     }
 
-    const BITS_PER_REG: u32 = 10;
-    let max_target = joltage.iter().copied().max().unwrap_or(0);
-    let can_pack = n <= 12 && max_target < (1 << BITS_PER_REG);
-
-    let interval = std::env::var("AOC_DAY10_PROGRESS_INTERVAL_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(Duration::from_millis)
-        .unwrap_or(Duration::from_millis(250));
-    let mut progress = prefix.map(|p| Progress::new(p, m, interval));
-
-    if can_pack {
-        let pack_state = |active: u16, remv: &[u16]| -> u128 {
-            let mut packed: u128 = 0;
-            for (i, &r) in remv.iter().enumerate() {
-                packed |= (r as u128) << (BITS_PER_REG * i as u32);
-            }
-            packed | ((active as u128) << (BITS_PER_REG * remv.len() as u32))
-        };
-
-        let mut memo: HashMap<u128, u32> = HashMap::new();
-        let active0: u16 = if m == 16 { u16::MAX } else { (1u16 << m) - 1 };
-        dfs_active_packed(
-            &masks,
-            &sizes,
-            active0,
-            &mut rem,
-            0,
-            &mut best,
-            &mut found,
-            &mut memo,
-            &pack_state,
-            &mut progress,
-        );
-    } else {
-        fn dfs_vecmemo(
-            masks: &[u16],
-            sizes: &[u32],
-            active: u16,
-            rem: &mut [u16],
-            used: u32,
-            best: &mut u32,
-            found: &mut bool,
-            memo: &mut HashMap<Vec<u16>, u32>,
-            progress: &mut Option<Progress<'_>>,
-        ) {
-            if used >= *best {
-                return;
-            }
-
-            if is_all_zero(rem) {
-                let old = *best;
-                *best = (*best).min(used);
-                *found = true;
-                if *best < old {
-                    if let Some(p) = progress.as_mut() {
-                        p.report_best(used, *best);
-                    }
-                }
-                return;
-            }
-
-            if active == 0 {
-                return;
-            }
-
-            if let Some(p) = progress.as_mut() {
-                let active_count = active.count_ones() as usize;
-                let depth = p.total_instrs - active_count;
-                p.tick(depth, active_count, used, *best, memo.len(), rem);
-            }
-
-            let mut coverable: u16 = 0;
-            let mut max_sz: u32 = 1;
-            for i in 0..masks.len() {
-                if (active & (1u16 << i)) != 0 {
-                    coverable |= masks[i];
-                    max_sz = max_sz.max(sizes[i]);
-                }
-            }
-            for (ri, &r) in rem.iter().enumerate() {
-                if r > 0 && (coverable & (1u16 << ri)) == 0 {
-                    return;
-                }
-            }
-
-            let lb1 = used.saturating_add(max_rem(rem));
-            let srem = sum_rem(rem);
-            let lb2 = used.saturating_add((srem + max_sz - 1) / max_sz);
-            let lb = lb1.max(lb2);
-            if lb >= *best {
-                return;
-            }
-
-            let mut active_local = active;
-            let mut forced_stack: Vec<(usize, u16)> = Vec::new();
-            let mut impossible = false;
-            'prop: loop {
-                let mut changed = false;
-                for reg in 0..rem.len() {
-                    let need = rem[reg];
-                    if need == 0 {
-                        continue;
-                    }
-                    let bit = 1u16 << reg;
-                    let mut count = 0usize;
-                    let mut last_i = 0usize;
-                    for i in 0..masks.len() {
-                        if (active_local & (1u16 << i)) != 0 && (masks[i] & bit) != 0 {
-                            count += 1;
-                            last_i = i;
-                            if count > 1 {
-                                break;
-                            }
-                        }
-                    }
-                    if count == 0 {
-                        impossible = true;
-                        break 'prop;
-                    }
-                    if count == 1 {
-                        let mask = masks[last_i];
-                        for rj in 0..rem.len() {
-                            if (mask & (1u16 << rj)) != 0 && rem[rj] < need {
-                                impossible = true;
-                                break 'prop;
-                            }
-                        }
-                        for rj in 0..rem.len() {
-                            if (mask & (1u16 << rj)) != 0 {
-                                rem[rj] -= need;
-                            }
-                        }
-                        forced_stack.push((last_i, need));
-                        active_local &= !(1u16 << last_i);
-                        changed = true;
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
-
-            if impossible {
-                for &(i, x) in forced_stack.iter().rev() {
-                    let mask = masks[i];
-                    for rj in 0..rem.len() {
-                        if (mask & (1u16 << rj)) != 0 {
-                            rem[rj] += x;
-                        }
-                    }
-                }
-                return;
-            }
-            let forced_used: u32 = forced_stack.iter().map(|&(_, x)| x as u32).sum();
-            let used2 = used + forced_used;
-            if used2 >= *best {
-                for &(i, x) in forced_stack.iter().rev() {
-                    let mask = masks[i];
-                    for rj in 0..rem.len() {
-                        if (mask & (1u16 << rj)) != 0 {
-                            rem[rj] += x;
-                        }
-                    }
-                }
-                return;
-            }
-
-            let mut key = Vec::with_capacity(rem.len() + 1);
-            key.push(active_local);
-            key.extend_from_slice(rem);
-            if let Some(&prev_used) = memo.get(&key) {
-                if used2 >= prev_used {
-                    if let Some(p) = progress.as_mut() {
-                        p.memo_prunes += 1;
-                    }
-                    for &(i, x) in forced_stack.iter().rev() {
-                        let mask = masks[i];
-                        for rj in 0..rem.len() {
-                            if (mask & (1u16 << rj)) != 0 {
-                                rem[rj] += x;
-                            }
-                        }
-                    }
-                    return;
-                }
-            }
-            memo.insert(key, used2);
-
-            if is_all_zero(rem) {
-                let old = *best;
-                *best = (*best).min(used2);
-                *found = true;
-                if *best < old {
-                    if let Some(p) = progress.as_mut() {
-                        p.report_best(used2, *best);
-                    }
-                }
-            } else if active_local != 0 {
-                let mut chosen_i: Option<usize> = None;
-                let mut chosen_reg_cover = usize::MAX;
-                for reg in 0..rem.len() {
-                    if rem[reg] == 0 {
-                        continue;
-                    }
-                    let bit = 1u16 << reg;
-                    let mut cover_count = 0usize;
-                    let mut some_i = None;
-                    for i in 0..masks.len() {
-                        if (active_local & (1u16 << i)) != 0 && (masks[i] & bit) != 0 {
-                            cover_count += 1;
-                            some_i = Some(i);
-                        }
-                    }
-                    if cover_count > 0 && cover_count < chosen_reg_cover {
-                        chosen_reg_cover = cover_count;
-                        chosen_i = some_i;
-                        if cover_count == 1 {
-                            break;
-                        }
-                    }
-                }
-                let i = chosen_i.unwrap_or_else(|| active_local.trailing_zeros() as usize);
-                let mask = masks[i];
-
-                let mut max_use: u16 = u16::MAX;
-                for rj in 0..rem.len() {
-                    if (mask & (1u16 << rj)) != 0 {
-                        max_use = max_use.min(rem[rj]);
-                    }
-                }
-
-                let next_active = active_local & !(1u16 << i);
-                for x in (0..=max_use).rev() {
-                    let new_used = used2 + x as u32;
-                    if new_used >= *best {
-                        continue;
-                    }
-                    if x != 0 {
-                        for rj in 0..rem.len() {
-                            if (mask & (1u16 << rj)) != 0 {
-                                rem[rj] -= x;
-                            }
-                        }
-                    }
-
-                    dfs_vecmemo(
-                        masks,
-                        sizes,
-                        next_active,
-                        rem,
-                        new_used,
-                        best,
-                        found,
-                        memo,
-                        progress,
-                    );
-
-                    if x != 0 {
-                        for rj in 0..rem.len() {
-                            if (mask & (1u16 << rj)) != 0 {
-                                rem[rj] += x;
-                            }
-                        }
-                    }
-                }
-            }
-
-            for &(i, x) in forced_stack.iter().rev() {
-                let mask = masks[i];
-                for rj in 0..rem.len() {
-                    if (mask & (1u16 << rj)) != 0 {
-                        rem[rj] += x;
-                    }
-                }
-            }
-        }
-
-        let mut memo: HashMap<Vec<u16>, u32> = HashMap::new();
-        let active0: u16 = if m == 16 { u16::MAX } else { (1u16 << m) - 1 };
-        dfs_vecmemo(
-            &masks,
-            &sizes,
-            active0,
-            &mut rem,
-            0,
-            &mut best,
-            &mut found,
-            &mut memo,
-            &mut progress,
-        );
+    fn forced_used(&self) -> u32 {
+        self.forced_stack.iter().map(|&(_, x)| x as u32).sum()
     }
-
-    if found { best as u64 } else { u64::MAX }
 }
 
-fn parse_input(input: &str) -> Vec<(Vec<bool>, Vec<Vec<usize>>, Vec<u32>)> {
-    input
-        .lines()
-        .map(|line| {
-            let mut sections = line.split_whitespace();
-            let goal = sections.next().unwrap();
-            let instruction_sections: Vec<&str> = sections
-                .by_ref()
-                .take_while(|s| !s.starts_with('{'))
-                .collect();
-            let joltage = line
-                .split_whitespace()
-                .find(|s| s.starts_with('{'))
-                .expect("Could not find joltage section");
-            (
-                goal[1..goal.len() - 1]
-                    .chars()
-                    .map(|c| match c {
-                        '#' => true,
-                        '.' => false,
-                        _ => panic!("Unexpected char in goal"),
-                    })
-                    .collect::<Vec<bool>>(),
-                instruction_sections
-                    .iter()
-                    .map(|s| {
-                        let inner = s.trim_start_matches('(').trim_end_matches(')');
-                        inner
-                            .split(',')
-                            .map(|num| num.parse::<usize>().unwrap())
-                            .collect::<Vec<usize>>()
-                    })
-                    .collect::<Vec<Vec<usize>>>(),
-                joltage[1..joltage.len() - 1]
-                    .split(',')
-                    .map(|num| num.parse::<u32>().unwrap())
-                    .collect::<Vec<u32>>(),
-            )
+trait MemoStrategy {
+    type Key;
+    type Map;
+
+    fn make_key(active: u16, rem: &[u16]) -> Self::Key;
+    fn get<'a>(map: &'a Self::Map, key: &Self::Key) -> Option<&'a u32>;
+    fn insert(map: &mut Self::Map, key: Self::Key, value: u32);
+    fn len(map: &Self::Map) -> usize;
+}
+
+struct PackedMemo;
+
+impl MemoStrategy for PackedMemo {
+    type Key = u128;
+    type Map = HashMap<u128, u32>;
+
+    fn make_key(active: u16, rem: &[u16]) -> u128 {
+        const BITS_PER_REG: u32 = 10;
+        let mut packed: u128 = 0;
+        for (i, &r) in rem.iter().enumerate() {
+            packed |= (r as u128) << (BITS_PER_REG * i as u32);
+        }
+        packed | ((active as u128) << (BITS_PER_REG * rem.len() as u32))
+    }
+
+    fn get<'a>(map: &'a Self::Map, key: &u128) -> Option<&'a u32> {
+        map.get(key)
+    }
+
+    fn insert(map: &mut Self::Map, key: u128, value: u32) {
+        map.insert(key, value);
+    }
+
+    fn len(map: &Self::Map) -> usize {
+        map.len()
+    }
+}
+
+struct VecMemo;
+
+impl MemoStrategy for VecMemo {
+    type Key = Vec<u16>;
+    type Map = HashMap<Vec<u16>, u32>;
+
+    fn make_key(active: u16, rem: &[u16]) -> Vec<u16> {
+        let mut key = Vec::with_capacity(rem.len() + 1);
+        key.push(active);
+        key.extend_from_slice(rem);
+        key
+    }
+
+    fn get<'a>(map: &'a Self::Map, key: &Vec<u16>) -> Option<&'a u32> {
+        map.get(key)
+    }
+
+    fn insert(map: &mut Self::Map, key: Vec<u16>, value: u32) {
+        map.insert(key, value);
+    }
+
+    fn len(map: &Self::Map) -> usize {
+        map.len()
+    }
+}
+
+fn initial_active_mask(num_masks: usize) -> u16 {
+    if num_masks >= 16 {
+        u16::MAX
+    } else {
+        (1u16 << num_masks) - 1
+    }
+}
+
+struct Progress<'a> {
+    prefix: &'a str,
+    total_instrs: usize,
+    start: Instant,
+    last_report: Instant,
+    last_best_report: Instant,
+    interval: Duration,
+    nodes: u64,
+    memo_prunes: u64,
+}
+
+impl<'a> Progress<'a> {
+    fn new(prefix: &'a str, total_instrs: usize, interval: Duration) -> Self {
+        let now = Instant::now();
+        Self {
+            prefix,
+            total_instrs,
+            start: now,
+            last_report: now,
+            last_best_report: now,
+            interval,
+            nodes: 0,
+            memo_prunes: 0,
+        }
+    }
+
+    fn tick(&mut self, total: usize, active: u16, state: &SearchState, memo_len: usize) {
+        self.nodes += 1;
+        if (self.nodes & 0x0fff) != 0 {
+            return;
+        }
+
+        let now = Instant::now();
+        if now.duration_since(self.last_report) < self.interval {
+            return;
+        }
+        self.last_report = now;
+
+        let active_count = active.count_ones() as usize;
+        let depth = total - active_count;
+        eprintln!(
+            "[{}] nodes={} depth={}/{} active={} used={} best={} rem_sum={} rem_max={} memo={} prunes={} elapsed={:?}",
+            self.prefix,
+            self.nodes,
+            depth,
+            self.total_instrs,
+            active_count,
+            state.used,
+            state.best,
+            state.sum_rem(),
+            state.max_rem(),
+            memo_len,
+            self.memo_prunes,
+            self.start.elapsed()
+        );
+    }
+
+    fn report_best(&mut self, used: u32, best: u32) {
+        let now = Instant::now();
+        if now.duration_since(self.last_best_report) < Duration::from_millis(250) {
+            return;
+        }
+        self.last_best_report = now;
+        eprintln!(
+            "[{}] new best={} (used={}) nodes={} elapsed={:?}",
+            self.prefix,
+            best,
+            used,
+            self.nodes,
+            self.start.elapsed()
+        );
+    }
+}
+
+struct PuzzleLine {
+    goal: Vec<bool>,
+    instructions: Vec<Vec<usize>>,
+    joltage: Vec<u32>,
+}
+
+fn parse_input(input: &str) -> Vec<PuzzleLine> {
+    input.lines().map(parse_line).collect()
+}
+
+fn parse_line(line: &str) -> PuzzleLine {
+    let mut tokens = line.split_whitespace();
+
+    let goal_str = tokens.next().expect("Missing goal");
+    let goal = goal_str[1..goal_str.len() - 1]
+        .chars()
+        .map(|c| match c {
+            '#' => true,
+            '.' => false,
+            _ => panic!("Unexpected char in goal: {}", c),
         })
-        .collect()
+        .collect();
+
+    let instructions: Vec<Vec<usize>> = tokens
+        .clone()
+        .take_while(|s| !s.starts_with('{'))
+        .map(|s| {
+            s.trim_matches(|c| c == '(' || c == ')')
+                .split(',')
+                .map(|n| n.parse().expect("Invalid instruction index"))
+                .collect()
+        })
+        .collect();
+
+    let joltage_str = line
+        .split_whitespace()
+        .find(|s| s.starts_with('{'))
+        .expect("Missing joltage section");
+
+    let joltage = joltage_str[1..joltage_str.len() - 1]
+        .split(',')
+        .map(|n| n.parse().expect("Invalid joltage value"))
+        .collect();
+
+    PuzzleLine {
+        goal,
+        instructions,
+        joltage,
+    }
 }
 
 #[cfg(test)]
@@ -887,10 +780,12 @@ mod tests {
     fn test_parse_input() {
         let input = include_str!("../data/day10_example.txt");
         let parsed = parse_input(input);
+
         assert_eq!(parsed.len(), 3);
-        assert_eq!(parsed[0].0, vec![false, true, true, false]);
+
+        assert_eq!(parsed[0].goal, vec![false, true, true, false]);
         assert_eq!(
-            parsed[0].1,
+            parsed[0].instructions,
             vec![
                 vec![3],
                 vec![1, 3],
@@ -900,10 +795,11 @@ mod tests {
                 vec![0, 1]
             ]
         );
-        assert_eq!(parsed[0].2, vec![3, 5, 4, 7]);
-        assert_eq!(parsed[1].0, vec![false, false, false, true, false]);
+        assert_eq!(parsed[0].joltage, vec![3, 5, 4, 7]);
+
+        assert_eq!(parsed[1].goal, vec![false, false, false, true, false]);
         assert_eq!(
-            parsed[1].1,
+            parsed[1].instructions,
             vec![
                 vec![0, 2, 3, 4],
                 vec![2, 3],
@@ -912,16 +808,26 @@ mod tests {
                 vec![1, 2, 3, 4]
             ]
         );
-        assert_eq!(parsed[1].2, vec![7, 5, 12, 7, 2]);
+        assert_eq!(parsed[1].joltage, vec![7, 5, 12, 7, 2]);
     }
 
     #[test]
     fn test_min_counter_operations() {
         let input = include_str!("../data/day10_example.txt");
         let parsed = parse_input(input);
-        assert_eq!(min_counter_operations(&parsed[0].2, &parsed[0].1), 10);
-        assert_eq!(min_counter_operations(&parsed[1].2, &parsed[1].1), 12);
-        assert_eq!(min_counter_operations(&parsed[2].2, &parsed[2].1), 11);
+
+        assert_eq!(
+            min_counter_operations(&parsed[0].joltage, &parsed[0].instructions),
+            10
+        );
+        assert_eq!(
+            min_counter_operations(&parsed[1].joltage, &parsed[1].instructions),
+            12
+        );
+        assert_eq!(
+            min_counter_operations(&parsed[2].joltage, &parsed[2].instructions),
+            11
+        );
     }
 
     #[test]
