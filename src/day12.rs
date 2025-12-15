@@ -44,7 +44,7 @@ struct Region {
     counts: Vec<usize>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Node {
     left: usize,
     right: usize,
@@ -62,45 +62,24 @@ struct DLX {
 
 impl DLX {
     fn new(num_cols: usize, primary_cols: usize) -> Self {
-        let mut nodes = Vec::with_capacity(1 + num_cols);
-        nodes.push(Node {
-            left: 0,
-            right: 0,
-            up: 0,
-            down: 0,
-            col: 0,
-        });
+        let mut nodes = vec![Node::default()];
+        nodes.extend((1..=num_cols).map(|idx| Node {
+            left: idx - 1,
+            right: if idx == num_cols { 0 } else { idx + 1 },
+            up: idx,
+            down: idx,
+            col: idx,
+        }));
 
-        let col_size = vec![0usize; 1 + num_cols];
-        let mut col_primary = vec![false; 1 + num_cols];
-
-        for c in 0..num_cols {
-            let idx = 1 + c;
-            let primary = c < primary_cols;
-            col_primary[idx] = primary;
-
-            nodes.push(Node {
-                left: if idx == 1 { 0 } else { idx - 1 },
-                right: if idx == num_cols { 0 } else { idx + 1 },
-                up: idx,
-                down: idx,
-                col: idx,
-            });
-        }
         if num_cols > 0 {
             nodes[0].right = 1;
             nodes[0].left = num_cols;
-            nodes[1].left = 0;
-            nodes[num_cols].right = 0;
-        } else {
-            nodes[0].left = 0;
-            nodes[0].right = 0;
         }
 
-        DLX {
+        Self {
             nodes,
-            col_size,
-            col_primary,
+            col_size: vec![0; 1 + num_cols],
+            col_primary: (0..=num_cols).map(|i| i > 0 && i <= primary_cols).collect(),
             root: 0,
         }
     }
@@ -110,35 +89,32 @@ impl DLX {
             return;
         }
 
-        let mut row_nodes: Vec<usize> = Vec::with_capacity(cols.len());
-        for &col_hdr in cols {
-            let node_idx = self.nodes.len();
-            let up = self.nodes[col_hdr].up;
-            let down = col_hdr;
+        let row_nodes: Vec<_> = cols
+            .iter()
+            .map(|&col_hdr| {
+                let node_idx = self.nodes.len();
+                let up = self.nodes[col_hdr].up;
 
-            self.nodes.push(Node {
-                left: node_idx,
-                right: node_idx,
-                up,
-                down,
-                col: col_hdr,
-            });
+                self.nodes.push(Node {
+                    left: node_idx,
+                    right: node_idx,
+                    up,
+                    down: col_hdr,
+                    col: col_hdr,
+                });
 
-            self.nodes[up].down = node_idx;
-            self.nodes[down].up = node_idx;
+                self.nodes[up].down = node_idx;
+                self.nodes[col_hdr].up = node_idx;
+                self.col_size[col_hdr] += 1;
 
-            self.col_size[col_hdr] += 1;
-
-            row_nodes.push(node_idx);
-        }
+                node_idx
+            })
+            .collect();
 
         let n = row_nodes.len();
-        for i in 0..n {
-            let a = row_nodes[i];
-            let b = row_nodes[(i + 1) % n];
-            let p = row_nodes[(i + n - 1) % n];
-            self.nodes[a].right = b;
-            self.nodes[a].left = p;
+        for (i, &a) in row_nodes.iter().enumerate() {
+            self.nodes[a].right = row_nodes[(i + 1) % n];
+            self.nodes[a].left = row_nodes[(i + n - 1) % n];
         }
     }
 
@@ -184,32 +160,21 @@ impl DLX {
         self.nodes[r].left = col_hdr;
     }
 
+    fn column_iter(&self) -> impl Iterator<Item = usize> + '_ {
+        std::iter::successors(Some(self.nodes[self.root].right), move |&c| {
+            (c != self.root).then(|| self.nodes[c].right)
+        })
+        .take_while(|&c| c != self.root)
+    }
+
     fn any_primary_left(&self) -> bool {
-        let mut c = self.nodes[self.root].right;
-        while c != self.root {
-            if self.col_primary[c] {
-                return true;
-            }
-            c = self.nodes[c].right;
-        }
-        false
+        self.column_iter().any(|c| self.col_primary[c])
     }
 
     fn choose_primary_column(&self) -> Option<usize> {
-        let mut best: Option<(usize, usize)> = None;
-        let mut c = self.nodes[self.root].right;
-        while c != self.root {
-            if self.col_primary[c] {
-                let sz = self.col_size[c];
-                match best {
-                    None => best = Some((sz, c)),
-                    Some((best_sz, _)) if sz < best_sz => best = Some((sz, c)),
-                    _ => {}
-                }
-            }
-            c = self.nodes[c].right;
-        }
-        best.map(|(_, c)| c)
+        self.column_iter()
+            .filter(|&c| self.col_primary[c])
+            .min_by_key(|&c| self.col_size[c])
     }
 
     fn solve_exists(&mut self) -> bool {
@@ -261,163 +226,128 @@ impl DLX {
 }
 
 fn is_shape_header(line: &str) -> Option<usize> {
-    let t = line.trim();
-    if t.ends_with(':') && !t.contains('x') {
-        let num = &t[..t.len() - 1];
-        if !num.is_empty() && num.chars().all(|ch| ch.is_ascii_digit()) {
-            return Some(num.parse().ok()?);
-        }
-    }
-    None
+    let num = line.trim().strip_suffix(':')?;
+    (!num.contains('x') && num.chars().all(|c| c.is_ascii_digit())).then(|| num.parse().ok())?
 }
 
 fn is_region_line(line: &str) -> bool {
-    let t = line.trim();
-    if let Some(colon) = t.find(':') {
-        let prefix = &t[..colon];
-        if let Some(xpos) = prefix.find('x') {
-            let (a, b) = (&prefix[..xpos], &prefix[xpos + 1..]);
-            return !a.is_empty()
+    line.trim()
+        .split_once(':')
+        .and_then(|(prefix, _)| prefix.split_once('x'))
+        .is_some_and(|(a, b)| {
+            !a.is_empty()
                 && !b.is_empty()
                 && a.chars().all(|c| c.is_ascii_digit())
-                && b.chars().all(|c| c.is_ascii_digit());
-        }
-    }
-    false
+                && b.chars().all(|c| c.is_ascii_digit())
+        })
 }
 
 fn parse_input(input: &str) -> (Vec<Shape>, Vec<Region>) {
-    let lines: Vec<&str> = input.lines().collect();
-    let mut i = 0usize;
-
+    let lines: Vec<_> = input.lines().collect();
+    let mut idx = 0;
     let mut shapes_by_id: Vec<Option<Shape>> = Vec::new();
 
-    while i < lines.len() {
-        let line = lines[i].trim_end();
-        if line.trim().is_empty() {
-            i += 1;
+    while idx < lines.len() && !is_region_line(lines[idx]) {
+        let line = lines[idx].trim();
+        if line.is_empty() {
+            idx += 1;
             continue;
         }
-        if is_region_line(line) {
-            break;
-        }
-        if let Some(id) = is_shape_header(line) {
-            i += 1;
-            let mut grid: Vec<String> = Vec::new();
-            while i < lines.len() {
-                let l = lines[i].trim_end();
-                if l.trim().is_empty() {
-                    break;
-                }
-                if is_shape_header(l).is_some() || is_region_line(l) {
-                    break;
-                }
-                grid.push(l.to_string());
-                i += 1;
-            }
 
-            let mut cells = Vec::new();
-            for (y, row) in grid.iter().enumerate() {
-                for (x, ch) in row.chars().enumerate() {
-                    if ch == '#' {
-                        cells.push((x as i32, y as i32));
-                    }
-                }
-            }
+        if let Some(id) = is_shape_header(line) {
+            idx += 1;
+            let grid: Vec<_> = lines[idx..]
+                .iter()
+                .take_while(|l| {
+                    let t = l.trim();
+                    !t.is_empty() && is_shape_header(t).is_none() && !is_region_line(t)
+                })
+                .collect();
+            idx += grid.len();
+
+            let cells: Vec<_> = grid
+                .iter()
+                .enumerate()
+                .flat_map(|(y, row)| {
+                    row.chars()
+                        .enumerate()
+                        .filter(|&(_, ch)| ch == '#')
+                        .map(move |(x, _)| (x as i32, y as i32))
+                })
+                .collect();
 
             if shapes_by_id.len() <= id {
                 shapes_by_id.resize_with(id + 1, || None);
             }
             shapes_by_id[id] = Some(Shape { id, cells });
         } else {
-            i += 1;
+            idx += 1;
         }
-        while i < lines.len() && lines[i].trim().is_empty() {
-            i += 1;
+
+        while idx < lines.len() && lines[idx].trim().is_empty() {
+            idx += 1;
         }
     }
 
-    let shapes: Vec<Shape> = shapes_by_id.into_iter().filter_map(|x| x).collect();
+    let shapes: Vec<_> = shapes_by_id.into_iter().flatten().collect();
 
-    let mut regions = Vec::new();
-    while i < lines.len() {
-        let t = lines[i].trim();
-        i += 1;
-        if t.is_empty() {
-            continue;
-        }
-        if !is_region_line(t) {
-            continue;
-        }
-        let colon = t.find(':').unwrap();
-        let prefix = &t[..colon];
-        let rest = t[colon + 1..].trim();
-        let xpos = prefix.find('x').unwrap();
-        let w: usize = prefix[..xpos].parse().unwrap();
-        let h: usize = prefix[xpos + 1..].parse().unwrap();
-        let counts: Vec<usize> = if rest.is_empty() {
-            Vec::new()
-        } else {
-            rest.split_whitespace()
-                .map(|s| s.parse().unwrap())
-                .collect()
-        };
-        regions.push(Region { w, h, counts });
-    }
+    let regions: Vec<_> = lines[idx..]
+        .iter()
+        .filter(|l| is_region_line(l))
+        .filter_map(|t| {
+            let (prefix, rest) = t.trim().split_once(':')?;
+            let (w, h) = prefix.split_once('x')?;
+            Some(Region {
+                w: w.parse().ok()?,
+                h: h.parse().ok()?,
+                counts: rest
+                    .split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect(),
+            })
+        })
+        .collect();
 
     (shapes, regions)
 }
 
 fn orientations(cells: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
-    fn rot(p: (i32, i32), k: i32) -> (i32, i32) {
-        let (x, y) = p;
-        match k.rem_euclid(4) {
+    fn rot((x, y): (i32, i32), k: i32) -> (i32, i32) {
+        match k & 3 {
             0 => (x, y),
             1 => (y, -x),
             2 => (-x, -y),
-            3 => (-y, x),
-            _ => unreachable!(),
+            _ => (-y, x),
         }
     }
-    fn reflect(p: (i32, i32)) -> (i32, i32) {
-        (-p.0, p.1)
-    }
-    fn normalize(mut pts: Vec<(i32, i32)>) -> Vec<(i32, i32)> {
-        let min_x = pts.iter().map(|p| p.0).min().unwrap_or(0);
-        let min_y = pts.iter().map(|p| p.1).min().unwrap_or(0);
-        for p in &mut pts {
-            p.0 -= min_x;
-            p.1 -= min_y;
-        }
+
+    fn normalize(pts: &mut Vec<(i32, i32)>) {
+        let (min_x, min_y) = pts.iter().fold((i32::MAX, i32::MAX), |(mx, my), &(x, y)| {
+            (mx.min(x), my.min(y))
+        });
+        pts.iter_mut().for_each(|(x, y)| {
+            *x -= min_x;
+            *y -= min_y;
+        });
         pts.sort_unstable();
-        pts
     }
 
-    let mut seen = HashSet::<Vec<(i32, i32)>>::new();
-    let mut outs = Vec::new();
-
-    for &flip in &[false, true] {
-        for k in 0..4 {
-            let mut pts: Vec<(i32, i32)> = cells
+    let mut seen = HashSet::new();
+    [false, true]
+        .into_iter()
+        .flat_map(|flip| (0..4).map(move |k| (flip, k)))
+        .filter_map(|(flip, k)| {
+            let mut pts: Vec<_> = cells
                 .iter()
-                .copied()
-                .map(|p| {
-                    let p = if flip { reflect(p) } else { p };
+                .map(|&(x, y)| {
+                    let p = if flip { (-x, y) } else { (x, y) };
                     rot(p, k)
                 })
                 .collect();
-            pts = normalize(pts);
-
-            if seen.insert(pts.clone()) {
-                outs.push(pts);
-            }
-        }
-    }
-    outs
-}
-
-fn area(cells: &[(i32, i32)]) -> usize {
-    cells.len()
+            normalize(&mut pts);
+            seen.insert(pts.clone()).then_some(pts)
+        })
+        .collect()
 }
 
 fn can_pack_region(
@@ -425,33 +355,28 @@ fn can_pack_region(
     precomputed_orientations: &[Vec<Vec<(i32, i32)>>],
     region: &Region,
 ) -> bool {
-    let w = region.w;
-    let h = region.h;
+    let (w, h) = (region.w, region.h);
+
+    if region.counts.len() > shapes.len() {
+        return false;
+    }
 
     let mut counts = vec![0usize; shapes.len()];
-    for (i, &c) in region.counts.iter().enumerate() {
-        if i < counts.len() {
-            counts[i] = c;
-        } else {
-            return false;
-        }
-    }
+    counts[..region.counts.len()].copy_from_slice(&region.counts);
 
-    let mut total_area = 0usize;
-    for sh in shapes {
-        total_area += counts[sh.id] * area(&sh.cells);
-    }
+    let total_area: usize = shapes.iter().map(|sh| counts[sh.id] * sh.cells.len()).sum();
     if total_area > w * h {
         return false;
     }
 
-    let mut copy_cols: Vec<Vec<usize>> = vec![Vec::new(); shapes.len()];
-    let mut primary_cols = 0usize;
-    for sh in shapes {
-        let c = counts[sh.id];
-        copy_cols[sh.id] = (0..c).map(|k| primary_cols + k).collect();
-        primary_cols += c;
-    }
+    let (copy_cols, primary_cols) = shapes.iter().fold(
+        (vec![Vec::new(); shapes.len()], 0usize),
+        |(mut cols, offset), sh| {
+            let c = counts[sh.id];
+            cols[sh.id] = (offset..offset + c).collect();
+            (cols, offset + c)
+        },
+    );
 
     let num_cols = primary_cols + w * h;
 
@@ -471,34 +396,26 @@ fn can_pack_region(
             return false;
         }
 
-        for &logical_piece_col in copy_cols[sid].iter() {
+        for &logical_piece_col in &copy_cols[sid] {
             let piece_hdr = hdr(logical_piece_col);
-
             let mut any_row_for_copy = false;
 
             for o in olist {
-                let max_x = o.iter().map(|p| p.0).max().unwrap_or(0) as usize;
-                let max_y = o.iter().map(|p| p.1).max().unwrap_or(0) as usize;
+                let (max_x, max_y) = o.iter().fold((0, 0), |(mx, my), &(x, y)| {
+                    (mx.max(x as usize), my.max(y as usize))
+                });
 
                 if max_x >= w || max_y >= h {
                     continue;
                 }
 
-                let tx_max = w - (max_x + 1);
-                let ty_max = h - (max_y + 1);
-
-                for ty in 0..=ty_max {
-                    for tx in 0..=tx_max {
-                        let mut cols: Vec<usize> = Vec::with_capacity(1 + o.len());
-                        cols.push(piece_hdr);
-
-                        for &(dx, dy) in o {
-                            let x = (tx as i32 + dx) as usize;
-                            let y = (ty as i32 + dy) as usize;
-                            let logical_cell_col = primary_cols + (y * w + x);
-                            cols.push(hdr(logical_cell_col));
-                        }
-
+                for ty in 0..=(h - max_y - 1) {
+                    for tx in 0..=(w - max_x - 1) {
+                        let mut cols = vec![piece_hdr];
+                        cols.extend(o.iter().map(|&(dx, dy)| {
+                            let (x, y) = (tx + dx as usize, ty + dy as usize);
+                            hdr(primary_cols + y * w + x)
+                        }));
                         dlx.add_row(&cols);
                         any_row_for_copy = true;
                     }
